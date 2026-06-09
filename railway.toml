@@ -1,0 +1,11 @@
+# Railway deployment for the XoomAgent Control API.
+# Builds the apps/api Dockerfile from the repo root as context.
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "apps/api/Dockerfile"
+
+[deploy]
+healthcheckPath = "/health"
+healthcheckTimeout = 120
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5

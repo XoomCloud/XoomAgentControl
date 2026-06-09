@@ -1,0 +1,440 @@
+// XoomAgent Control Platform — PostgreSQL schema
+// Provider-agnostic where possible. SwarmClaw is the default runtime but the
+// model permits future runtime types (openclaw, langgraph, crewai, custom).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Enums
+// ──────────────────────────────────────────────────────────────────────────
+
+enum TenantStatus {
+  pending
+  provisioning
+  active
+  suspended
+  failed
+  deleted
+}
+
+enum HostStatus {
+  online
+  offline
+  draining
+  maintenance
+}
+
+enum CommandType {
+  create_tenant
+  start_tenant
+  stop_tenant
+  restart_tenant
+  delete_tenant
+  update_runtime
+  backup_tenant
+  restore_tenant
+  collect_logs
+}
+
+enum CommandStatus {
+  queued
+  claimed
+  running
+  succeeded
+  failed
+  cancelled
+}
+
+enum EventSeverity {
+  debug
+  info
+  warning
+  error
+  critical
+}
+
+enum BackupStatus {
+  pending
+  running
+  succeeded
+  failed
+}
+
+enum UserRole {
+  platform_owner
+  msp_admin
+  support_engineer
+  read_only_auditor
+  tenant_admin
+}
+
+enum McpTransport {
+  stdio
+  http
+  sse
+  websocket
+}
+
+enum McpRiskLevel {
+  low
+  medium
+  high
+  critical
+}
+
+enum SecretProvider {
+  local
+  vault
+  infisical
+  doppler
+  aws
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Identity & access
+// ──────────────────────────────────────────────────────────────────────────
+
+model User {
+  id           String     @id @default(cuid())
+  email        String     @unique
+  name         String?
+  passwordHash String     @map("password_hash")
+  role         UserRole   @default(support_engineer)
+  active       Boolean    @default(true)
+  lastLoginAt  DateTime?  @map("last_login_at")
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+
+  auditLogs    AuditLog[]
+
+  @@map("users")
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Hosts (Hetzner dedicated Firecracker hosts)
+// ──────────────────────────────────────────────────────────────────────────
+
+model Host {
+  id                String      @id @default(cuid())
+  name              String
+  provider          String      @default("hetzner")
+  location          String?
+  hostname          String?
+  publicIp          String?     @map("public_ip")
+  privateIp         String?     @map("private_ip")
+  status            HostStatus  @default(offline)
+  hostAgentVersion  String?     @map("host_agent_version")
+  firecrackerVersion String?    @map("firecracker_version")
+
+  // Capabilities reported at registration (kvm, firecracker, nftables, docker...)
+  capabilitiesJson  Json?       @map("capabilities_json")
+
+  totalCpu          Int?        @map("total_cpu")
+  totalRamMb        Int?        @map("total_ram_mb")
+  totalDiskGb       Int?        @map("total_disk_gb")
+  availableCpu      Int?        @map("available_cpu")
+  availableRamMb    Int?        @map("available_ram_mb")
+  availableDiskGb   Int?        @map("available_disk_gb")
+
+  // Hashed long-lived credential issued after registration approval.
+  agentKeyHash      String?     @map("agent_key_hash")
+  approved          Boolean     @default(false)
+
+  lastSeenAt        DateTime?   @map("last_seen_at")
+  createdAt         DateTime    @default(now()) @map("created_at")
+  updatedAt         DateTime    @updatedAt @map("updated_at")
+
+  tenants           Tenant[]
+  commands          HostCommand[]
+  heartbeats        HostHeartbeat[]
+  backups           Backup[]
+
+  @@index([status])
+  @@map("hosts")
+}
+
+model HostHeartbeat {
+  id               String   @id @default(cuid())
+  hostId           String   @map("host_id")
+  cpuUsage         Float?   @map("cpu_usage")
+  ramUsage         Float?   @map("ram_usage")
+  diskUsage        Float?   @map("disk_usage")
+  runningMicrovms  Int      @default(0) @map("running_microvms")
+  firecrackerStatus String? @map("firecracker_status")
+  agentStatus      String?  @map("agent_status")
+  rawJson          Json?    @map("raw_json")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  host             Host     @relation(fields: [hostId], references: [id], onDelete: Cascade)
+
+  @@index([hostId, createdAt])
+  @@map("host_heartbeats")
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Tenants
+// ──────────────────────────────────────────────────────────────────────────
+
+model Tenant {
+  id              String        @id @default(cuid())
+  name            String
+  slug            String        @unique
+  status          TenantStatus  @default(pending)
+  assignedHostId  String?       @map("assigned_host_id")
+  runtimeType     String        @default("swarmclaw") @map("runtime_type")
+  runtimeVersion  String        @default("latest") @map("runtime_version")
+  domain          String?
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  assignedHost    Host?         @relation(fields: [assignedHostId], references: [id], onDelete: SetNull)
+
+  resourceLimits  TenantResourceLimit?
+  runtimeConfig   TenantRuntimeConfig?
+  commands        HostCommand[]
+  events          TenantEvent[]
+  secrets         SecretReference[]
+  backups         Backup[]
+  mcpAccess       TenantMcpAccess[]
+
+  @@index([status])
+  @@index([assignedHostId])
+  @@map("tenants")
+}
+
+model TenantResourceLimit {
+  tenantId         String  @id @map("tenant_id")
+  vcpu             Int     @default(2)
+  ramMb            Int     @default(4096) @map("ram_mb")
+  diskGb           Int     @default(40) @map("disk_gb")
+  maxAgents        Int     @default(5) @map("max_agents")
+  maxMonthlySpend  Decimal @default(0) @map("max_monthly_spend") @db.Decimal(12, 2)
+  maxTokensPerDay  BigInt  @default(0) @map("max_tokens_per_day")
+  maxMcpTools      Int     @default(10) @map("max_mcp_tools")
+
+  tenant           Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("tenant_resource_limits")
+}
+
+model TenantRuntimeConfig {
+  tenantId           String  @id @map("tenant_id")
+  swarmclawVersion   String  @default("latest") @map("swarmclaw_version")
+  bootstrapConfigJson Json?  @map("bootstrap_config_json")
+  environmentJson    Json?   @map("environment_json")
+  agentTemplatesJson Json?   @map("agent_templates_json")
+  skillsJson         Json?   @map("skills_json")
+  schedulesJson      Json?   @map("schedules_json")
+  mcpConfigJson      Json?   @map("mcp_config_json")
+  memoryConfigJson   Json?   @map("memory_config_json")
+  llmConfigJson      Json?   @map("llm_config_json")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  tenant             Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("tenant_runtime_config")
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Command queue (control plane -> host agent)
+// ──────────────────────────────────────────────────────────────────────────
+
+model HostCommand {
+  id           String        @id @default(cuid())
+  hostId       String        @map("host_id")
+  tenantId     String?       @map("tenant_id")
+  commandType  CommandType   @map("command_type")
+  status       CommandStatus @default(queued)
+  payloadJson  Json?         @map("payload_json")
+  resultJson   Json?         @map("result_json")
+  errorMessage String?       @map("error_message")
+  attempts     Int           @default(0)
+  createdAt    DateTime      @default(now()) @map("created_at")
+  claimedAt    DateTime?     @map("claimed_at")
+  completedAt  DateTime?     @map("completed_at")
+
+  host         Host          @relation(fields: [hostId], references: [id], onDelete: Cascade)
+  tenant       Tenant?       @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+
+  @@index([hostId, status])
+  @@index([tenantId])
+  @@map("host_commands")
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Events, audit, metrics
+// ──────────────────────────────────────────────────────────────────────────
+
+model TenantEvent {
+  id           String        @id @default(cuid())
+  tenantId     String        @map("tenant_id")
+  eventType    String        @map("event_type")
+  severity     EventSeverity @default(info)
+  message      String
+  metadataJson Json?         @map("metadata_json")
+  createdAt    DateTime      @default(now()) @map("created_at")
+
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt])
+  @@index([severity])
+  @@map("tenant_events")
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  actorUserId String?  @map("actor_user_id")
+  action      String
+  targetType  String?  @map("target_type")
+  targetId    String?  @map("target_id")
+  ipAddress   String?  @map("ip_address")
+  metadataJson Json?   @map("metadata_json")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  actor       User?    @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([actorUserId, createdAt])
+  @@index([targetType, targetId])
+  @@map("audit_logs")
+}
+
+// Aggregated usage metrics (token/spend) pulled from the LLM gateway.
+model UsageMetric {
+  id          String   @id @default(cuid())
+  tenantId    String   @map("tenant_id")
+  windowStart DateTime @map("window_start")
+  windowEnd   DateTime @map("window_end")
+  model       String?
+  inputTokens BigInt   @default(0) @map("input_tokens")
+  outputTokens BigInt  @default(0) @map("output_tokens")
+  spendUsd    Decimal  @default(0) @map("spend_usd") @db.Decimal(12, 4)
+  source      String   @default("litellm")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([tenantId, windowStart])
+  @@map("usage_metrics")
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Secrets (references only — never raw secret material unless encrypted)
+// ──────────────────────────────────────────────────────────────────────────
+
+model SecretReference {
+  id                String         @id @default(cuid())
+  tenantId          String?        @map("tenant_id")
+  name              String
+  provider          SecretProvider @default(local)
+  // For provider=local this points at an encrypted blob; otherwise an external ref.
+  externalSecretRef String         @map("external_secret_ref")
+  // Envelope-encrypted ciphertext when provider=local (base64). Null for external.
+  encryptedValue    String?        @map("encrypted_value")
+  createdAt         DateTime       @default(now()) @map("created_at")
+  updatedAt         DateTime       @updatedAt @map("updated_at")
+
+  tenant            Tenant?        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, name])
+  @@map("secrets_references")
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Agent templates (reusable agent packs)
+// ──────────────────────────────────────────────────────────────────────────
+
+model AgentTemplate {
+  id                 String   @id @default(cuid())
+  name               String   @unique
+  description        String?
+  defaultSystemPrompt String? @map("default_system_prompt")
+  skillsJson         Json?    @map("skills_json")
+  schedulesJson      Json?    @map("schedules_json")
+  mcpToolsJson       Json?    @map("mcp_tools_json")
+  memoryPolicyJson   Json?    @map("memory_policy_json")
+  llmPolicyJson      Json?    @map("llm_policy_json")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  @@map("agent_templates")
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// MCP registry + per-tenant access policy
+// ──────────────────────────────────────────────────────────────────────────
+
+model McpServer {
+  id               String        @id @default(cuid())
+  name             String        @unique
+  description      String?
+  transport        McpTransport  @default(http)
+  endpoint         String?
+  authType         String?       @map("auth_type")
+  requiredSecrets  Json?         @map("required_secrets")
+  riskLevel        McpRiskLevel  @default(medium) @map("risk_level")
+  approvalRequired Boolean       @default(true) @map("approval_required")
+  enabled          Boolean       @default(true)
+  createdAt        DateTime      @default(now()) @map("created_at")
+  updatedAt        DateTime      @updatedAt @map("updated_at")
+
+  tenantAccess     TenantMcpAccess[]
+
+  @@map("mcp_servers")
+}
+
+model TenantMcpAccess {
+  id          String   @id @default(cuid())
+  tenantId    String   @map("tenant_id")
+  mcpServerId String   @map("mcp_server_id")
+  enabled     Boolean  @default(false)
+  // Optional per-agent scoping: list of agent ids/names this server is exposed to.
+  agentScope  Json?    @map("agent_scope")
+  approved    Boolean  @default(false)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  mcpServer   McpServer @relation(fields: [mcpServerId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, mcpServerId])
+  @@map("tenant_mcp_access")
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Backups
+// ──────────────────────────────────────────────────────────────────────────
+
+model Backup {
+  id           String       @id @default(cuid())
+  tenantId     String       @map("tenant_id")
+  hostId       String?      @map("host_id")
+  backupType   String       @default("full") @map("backup_type")
+  artifactPath String?      @map("artifact_path")
+  status       BackupStatus @default(pending)
+  sizeBytes    BigInt?      @map("size_bytes")
+  createdAt    DateTime     @default(now()) @map("created_at")
+  completedAt  DateTime?    @map("completed_at")
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  host         Host?        @relation(fields: [hostId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@map("backups")
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Platform settings (singleton key/value)
+// ──────────────────────────────────────────────────────────────────────────
+
+model PlatformSetting {
+  key       String   @id
+  valueJson Json     @map("value_json")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("platform_settings")
+}

@@ -1,0 +1,42 @@
+name: Deploy API to Railway
+
+# Auto-deploys the control-plane API (apps/api) to Railway on every push that
+# touches the API or its workspace dependencies. Uses `railway up`, which uploads
+# the source and builds apps/api/Dockerfile on Railway's builders.
+#
+# Setup (one-time): add a repo secret RAILWAY_TOKEN = the Railway project token
+#   GitHub → repo Settings → Secrets and variables → Actions → New repository secret
+
+on:
+  push:
+    branches:
+      - claude/xoomagent-control-platform-k3U5J
+      - main
+    paths:
+      - "apps/api/**"
+      - "packages/**"
+      - "railway.toml"
+      - "pnpm-lock.yaml"
+      - ".railwayignore"
+      - ".github/workflows/deploy-railway.yml"
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Deploy to Railway
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          if [ -z "$RAILWAY_TOKEN" ]; then
+            echo "::warning::RAILWAY_TOKEN secret not set — skipping deploy."
+            echo "Add it under repo Settings → Secrets and variables → Actions."
+            exit 0
+          fi
+          npm i -g @railway/cli
+          railway up --service xoom-api --ci
