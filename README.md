@@ -10,38 +10,55 @@ tenants over outbound network paths.
 This repo is a **pnpm monorepo** containing the control-plane API and web UI,
 the per-host agent, shared packages, and the deployment infra.
 
+In **production** the control plane is fully managed — the **web dashboard runs on
+Vercel** and the **API + PostgreSQL run on Railway** — with **no servers to patch**.
+Tenant workloads run on separate **Hetzner dedicated KVM hosts**, which connect
+*outbound only* to the Railway API. See [Production deployment](#production-deployment).
+
 ---
 
 ## Architecture summary
 
 ```
-                          ┌──────────────────────── Control plane (VPS) ────────────────────────┐
-                          │                                                                       │
-   Operator browser ───►  │  apps/web (Next.js)  ──►  apps/api (Fastify + Zod)  ──►  PostgreSQL   │
-                          │                                   │     ▲                  (Prisma)   │
-                          │                                   │     │                  + Redis     │
-                          └───────────────────────────────────┼─────┼───────────────────────────┘
-                                                              │     │  (outbound only — hosts
-                                            command queue ────┘     └──── register / heartbeat /
-                                            (HostCommand)                 poll commands / push logs)
-                                                              ▼     │
-        ┌──────────────── Hetzner KVM host ───────────────────┴─────┴───┐
-        │  host-agent (outbound-only, no inbound mgmt ports)            │
-        │    ├── Firecracker MicroVM (tenant A) ── SwarmClaw runtime    │
-        │    ├── Firecracker MicroVM (tenant B) ── SwarmClaw runtime    │
-        │    └── …                                                      │
-        └───────────────────────────────────────────────────────────────┘
-                                   │
-        shared services  ─────────►│ LiteLLM gateway · Supermemory · MCP gateway
+   Operator browser
+        │  loads dashboard (HTTPS)         │  data calls (HTTPS + JWT, CORS-allowed)
+        ▼                                  ▼
+ ┌──────────────────────┐        ┌──────────────────────────────┐
+ │ Vercel               │        │ Railway                      │
+ │ apps/web (Next.js)   │        │ apps/api (Fastify + Zod)     │
+ │ operator dashboard   │        │   └── PostgreSQL (Prisma)    │
+ └──────────────────────┘        └───────────────┬──────────────┘
+   deploys from `main`                           │  ▲
+                                                 │  │  outbound HTTPS only:
+                          command queue ─────────┘  │  register · heartbeat (30s) ·
+                          (HostCommand rows)         │  poll commands · results · logs
+                                                 ▼  │
+        ┌──────────────── Hetzner dedicated KVM host(s) ──────────────┐
+        │  host-agent  (outbound-only — NO inbound management ports)  │
+        │    ├── Firecracker MicroVM (tenant A) ── SwarmClaw runtime  │
+        │    ├── Firecracker MicroVM (tenant B) ── SwarmClaw runtime  │
+        │    └── …                                                    │
+        └──────────────────────────────┬──────────────────────────────┘
+                                        │ outbound
+                                        ▼
+   Shared services:  LiteLLM (LLM gateway) · Supermemory (memory) · MCP gateway
 ```
 
-- The **control plane** is the only system operators talk to. It holds all state
-  (tenants, hosts, commands, secrets, events) in PostgreSQL.
-- **Host agents are outbound-only.** Hosts open **no inbound management ports**;
-  the agent initiates every connection to the control plane (register,
-  heartbeat, poll for commands, report results, forward logs).
-- Work is dispatched via a **command queue** (`HostCommand` rows). The control
-  plane enqueues; the agent claims and executes; results reconcile tenant state.
+- The **control plane is fully managed**: **Vercel** serves the operator
+  dashboard, **Railway** runs the API + PostgreSQL (all tenant/host/command/
+  secret/event state). No servers to patch.
+- The dashboard is a **browser client** — it loads from Vercel and calls the
+  Railway API directly over HTTPS with a JWT; the API's `CORS_ORIGINS` allowlists
+  the dashboard origin.
+- **Host agents are outbound-only.** Hetzner hosts open **no inbound management
+  ports**; the agent initiates every connection (register, heartbeat, poll for
+  commands, report results, forward logs). Nothing ever connects *into* a host.
+- Work is dispatched via a **command queue** (`HostCommand` rows): the API
+  enqueues, the agent claims and executes on its Firecracker MicroVMs, and results
+  reconcile tenant state.
+- Each tenant is isolated in its **own Firecracker MicroVM** running the
+  **SwarmClaw** runtime; tenants consume the shared LiteLLM / Supermemory / MCP
+  services outbound.
 
 ---
 
@@ -71,10 +88,13 @@ docs/             Architecture, host-agent, tenant-lifecycle, and API reference
 | API              | Fastify with `fastify-type-provider-zod`, OpenAPI via Swagger |
 | Validation       | Zod schemas in `@xoom/shared-types`                          |
 | Database         | PostgreSQL + Prisma (`@xoom/db`)                             |
-| Cache / queue    | Redis                                                         |
+| Cache / queue    | Redis (local infra only; not required by the MVP API)         |
 | Auth             | JWT admin sessions; per-host bearer keys                      |
 | Packaging / dev  | pnpm workspaces, Docker Compose                              |
 | Host runtime     | KVM + Firecracker MicroVMs running SwarmClaw                 |
+| Hosting — web    | **Vercel** (auto-deploys `apps/web` from `main`)             |
+| Hosting — API+DB | **Railway** (Docker build of `apps/api` + managed PostgreSQL) |
+| Tenant hosts     | **Hetzner** dedicated KVM (Firecracker + SwarmClaw)         |
 
 > **Framework note:** the brief listed both **NestJS** and **Fastify** as
 > acceptable for the API. **Fastify was chosen for the MVP** for its lighter
@@ -83,7 +103,41 @@ docs/             Architecture, host-agent, tenant-lifecycle, and API reference
 
 ---
 
-## Quickstart
+## Production deployment
+
+The platform is deployed and **trunk-based on `main`**:
+
+| Component     | Host                              | URL                                          |
+| ------------- | --------------------------------- | -------------------------------------------- |
+| Web dashboard | Vercel (`apps/web`)               | https://xoom-agent-control-api.vercel.app    |
+| Control API   | Railway (`apps/api/Dockerfile`)   | https://xoom-api-production.up.railway.app   |
+| Database      | Railway PostgreSQL                | internal to the Railway project              |
+
+**Continuous deployment — both deploy from `main`:**
+
+- **Web → Vercel.** Vercel's native GitHub integration auto-deploys `apps/web` to
+  production on every push to `main` (project Root Directory = `apps/web`).
+- **API → Railway.** [`.github/workflows/deploy-railway.yml`](.github/workflows/deploy-railway.yml)
+  runs `railway up` on pushes to `main` that touch `apps/api`, `packages/`,
+  `railway.toml`, or the lockfile, building `apps/api/Dockerfile`. Requires the
+  repo secret `RAILWAY_TOKEN`.
+
+**Wiring:**
+
+- The web build receives `NEXT_PUBLIC_API_URL` (the Railway API URL) at build time.
+- The API's `CORS_ORIGINS` allowlists the Vercel dashboard origin(s).
+- The API container runs `prisma db push` + seed on boot, then starts. (Use
+  `prisma migrate deploy` with checked-in migrations for change-controlled releases.)
+- The Vercel project has **Deployment Protection (SSO)** enabled, so the dashboard
+  sits behind Vercel auth *in addition to* the app's own operator login.
+
+**Provider-agnostic by design.** Railway can be swapped for any container host
+(Render / Fly / a VPS) and Railway Postgres for Neon or any managed Postgres by
+changing `DATABASE_URL`; the host agent and tenant model are unaffected.
+
+---
+
+## Quickstart (local development)
 
 ### 1. Install
 
