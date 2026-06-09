@@ -1,0 +1,19 @@
+# XoomAgent Control Platform reverse proxy.
+# Routes the API under /api and /docs, everything else to the Next.js web app.
+
+:80 {
+	@api path /api/* /docs /docs/* /health
+	handle @api {
+		reverse_proxy api:4000
+	}
+	handle {
+		reverse_proxy web:3000
+	}
+}
+
+# For production, replace :80 with your domain to get automatic HTTPS:
+# control.xoomagent.com {
+#   @api path /api/* /docs /docs/* /health
+#   handle @api { reverse_proxy api:4000 }
+#   handle { reverse_proxy web:3000 }
+# }

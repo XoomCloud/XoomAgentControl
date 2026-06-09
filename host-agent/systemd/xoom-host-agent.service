@@ -1,0 +1,26 @@
+[Unit]
+Description=XoomAgent Host Agent
+Documentation=https://github.com/xoomcloud/xoomagentcontrol
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Outbound-only: this service initiates all connections to the control plane.
+EnvironmentFile=/etc/xoomagent/agent.env
+ExecStart=/usr/bin/node /opt/xoomagent/host-agent/dist/index.js run
+Restart=always
+RestartSec=5
+User=xoomagent
+Group=xoomagent
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/xoomagent /etc/xoomagent
+# Firecracker + tap/nftables management needs these capabilities on a real host.
+AmbientCapabilities=CAP_NET_ADMIN CAP_SYS_ADMIN
+StateDirectory=xoomagent
+
+[Install]
+WantedBy=multi-user.target

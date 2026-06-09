@@ -1,0 +1,25 @@
+{
+  "name": "@xoom/host-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "xoom-host-agent": "dist/index.js"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts run",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js run",
+    "preflight": "tsx src/index.ts preflight",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@xoom/shared-types": "workspace:*",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "@types/node": "^22.9.0"
+  }
+}
