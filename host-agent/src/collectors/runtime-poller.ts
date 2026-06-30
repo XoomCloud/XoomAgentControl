@@ -32,17 +32,42 @@ export class RuntimePoller {
   private async fetchAgents(rt: RuntimeConfig): Promise<AgentHeartbeat[]> {
     const headers: Record<string, string> = { accept: "application/json" };
     if (rt.api_key) headers.authorization = `Bearer ${rt.api_key}`;
-    // Try common listing endpoints in order.
+    const base = rt.base_url.replace(/\/$/, "");
+
+    // OpenClaw is an OpenAI-compatible gateway: its agents are exposed as
+    // models at GET /v1/models, with ids like `openclaw/<agentId>`.
+    if (rt.type === "openclaw") return this.fetchOpenAiModels(rt, base, headers);
+
+    // SwarmClaw / generic: try common agent-listing endpoints in order.
     const candidates = ["/api/agents", "/api/v1/agents", "/agents"];
     for (const path of candidates) {
-      const res = await fetch(`${rt.base_url.replace(/\/$/, "")}${path}`, { headers, signal: AbortSignal.timeout(5000) }).catch(() => null);
+      const res = await fetch(`${base}${path}`, { headers, signal: AbortSignal.timeout(5000) }).catch(() => null);
       if (!res || !res.ok) continue;
       const data = (await res.json().catch(() => null)) as unknown;
       const list = Array.isArray(data) ? data : Array.isArray((data as { agents?: unknown[] })?.agents) ? (data as { agents: unknown[] }).agents : null;
       if (!list) continue;
       return list.map((raw) => this.normalize(rt, raw as Record<string, unknown>));
     }
-    return [];
+    // Fall back to the OpenAI surface (works for any OpenAI-compatible gateway).
+    return this.fetchOpenAiModels(rt, base, headers);
+  }
+
+  /** Lists agents from an OpenAI-compatible /v1/models endpoint (OpenClaw et al). */
+  private async fetchOpenAiModels(rt: RuntimeConfig, base: string, headers: Record<string, string>): Promise<AgentHeartbeat[]> {
+    const res = await fetch(`${base}/v1/models`, { headers, signal: AbortSignal.timeout(5000) }).catch(() => null);
+    if (!res || !res.ok) return [];
+    const data = (await res.json().catch(() => null)) as { data?: { id?: unknown }[] } | null;
+    const list = Array.isArray(data?.data) ? data!.data : [];
+    return list
+      .map((m) => (typeof m.id === "string" ? m.id : ""))
+      // keep concrete agent targets (`openclaw/<agentId>`), skip the bare routing alias
+      .filter((id) => id.includes("/"))
+      .map((id) => ({
+        tenant_id: rt.tenant_id,
+        external_id: id,
+        status: "online" as AgentStatus,
+        current_llm: id,
+      }));
   }
 
   private normalize(rt: RuntimeConfig, a: Record<string, unknown>): AgentHeartbeat {
