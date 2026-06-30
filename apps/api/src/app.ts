@@ -10,6 +10,12 @@ import {
 } from "fastify-type-provider-zod";
 import { loadConfig, corsOrigins } from "./config.js";
 import { contextPlugin } from "./plugins/context.js";
+import { realtimePlugin } from "./plugins/realtime.js";
+import { ingestRoutes } from "./modules/ingest/routes.js";
+import { telemetryRoutes } from "./modules/telemetry/routes.js";
+import { agentRoutes } from "./modules/agents/routes.js";
+import { providerRoutes } from "./modules/providers/routes.js";
+import { integrationRoutes } from "./modules/integrations/routes.js";
 import { authRoutes } from "./modules/auth/routes.js";
 import { tenantRoutes } from "./modules/tenants/routes.js";
 import { hostAdminRoutes } from "./modules/hosts/admin.routes.js";
@@ -56,6 +62,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(swaggerUi, { routePrefix: "/docs" });
 
   await app.register(contextPlugin);
+  await app.register(realtimePlugin);
 
   app.get("/health", async () => ({ status: "ok", ts: new Date().toISOString() }));
 
@@ -73,9 +80,16 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(dashboardRoutes, { prefix: "/api/dashboard" });
   await app.register(settingsRoutes, { prefix: "/api/settings" });
 
+  // Control Center — observability + agent/provider/integration management
+  await app.register(telemetryRoutes, { prefix: "/api/telemetry" });
+  await app.register(agentRoutes, { prefix: "/api/agents" });
+  await app.register(providerRoutes, { prefix: "/api/providers" });
+  await app.register(integrationRoutes, { prefix: "/api/integrations" });
+
   // Host agent API (outbound from hosts). Registration is token-gated; the rest
   // is host-credential gated inside the plugin.
   await app.register(hostAgentRoutes, { prefix: "/api/hosts" });
+  await app.register(ingestRoutes, { prefix: "/api/hosts" });
 
   app.setErrorHandler((err: Error & { validation?: unknown; statusCode?: number }, req, reply) => {
     if (err.validation) {

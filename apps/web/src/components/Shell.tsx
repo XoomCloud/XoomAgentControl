@@ -4,17 +4,22 @@ import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { clearSession, getStoredUser, getToken, type SessionUser } from "@/lib/api";
+import { CommandPalette } from "@/components/CommandPalette";
+import { NotificationCenter } from "@/components/NotificationCenter";
+import { useRealtimeStatus } from "@/lib/realtime";
 
 const NAV = [
   { href: "/", label: "Overview", ico: "◈" },
   { href: "/tenants", label: "Tenants", ico: "▣" },
-  { href: "/hosts", label: "Hosts", ico: "▤" },
+  { href: "/agents", label: "Agents", ico: "✦" },
+  { href: "/infrastructure", label: "Infrastructure", ico: "▤" },
   { href: "/deployments", label: "Deployments", ico: "↻" },
-  { href: "/templates", label: "Agent Templates", ico: "✦" },
+  { href: "/providers", label: "AI Providers", ico: "✧" },
   { href: "/mcp", label: "MCP Registry", ico: "⚙" },
-  { href: "/llm", label: "LLM Gateway", ico: "✧" },
+  { href: "/integrations", label: "Integrations", ico: "⧉" },
   { href: "/memory", label: "Memory", ico: "◉" },
-  { href: "/logs", label: "Logs", ico: "≣" },
+  { href: "/logs", label: "Logs & Metrics", ico: "≣" },
+  { href: "/templates", label: "Agent Templates", ico: "❏" },
   { href: "/settings", label: "Settings", ico: "⚒" },
 ];
 
@@ -23,6 +28,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [user, setUser] = useState<SessionUser | null>(null);
   const [ready, setReady] = useState(false);
+  const live = useRealtimeStatus();
 
   useEffect(() => {
     if (!getToken()) {
@@ -75,11 +81,17 @@ export function Shell({ children }: { children: React.ReactNode }) {
         <header className="topbar">
           <div className="topbar-title">{current?.label ?? "XoomAgent"}</div>
           <div className="row">
-            <span className="badge purple">
-              <span className="dot" /> {user?.role}
+            <button className="btn sm" onClick={() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true }))}>
+              ⌘K Search
+            </button>
+            <NotificationCenter />
+            <span className={`badge ${live ? "green" : "gray"}`} title={live ? "Realtime connected" : "Realtime offline (polling)"}>
+              <span className="dot" /> {live ? "live" : "polling"}
             </span>
+            <span className="badge purple">{user?.role}</span>
           </div>
         </header>
+        <CommandPalette />
         <div className="content">{children}</div>
       </div>
     </div>

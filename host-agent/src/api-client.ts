@@ -5,6 +5,8 @@ import type {
   HeartbeatResponse,
   NextCommandResponse,
   CommandResultRequest,
+  IngestBatch,
+  AgentHeartbeat,
 } from "@xoom/shared-types";
 
 /** Thin client over the control-plane host-agent API. All calls are outbound. */
@@ -54,6 +56,22 @@ export class ControlPlaneClient {
       method: "POST",
       auth: "host",
       body: JSON.stringify(body),
+    });
+  }
+
+  ingest(batch: IngestBatch): Promise<unknown> {
+    return this.req(`/api/hosts/${this.hostId}/telemetry`, {
+      method: "POST",
+      auth: "host",
+      body: JSON.stringify(batch),
+    });
+  }
+
+  reportAgents(beats: AgentHeartbeat[]): Promise<unknown> {
+    return this.req(`/api/hosts/${this.hostId}/agents`, {
+      method: "POST",
+      auth: "host",
+      body: JSON.stringify(beats),
     });
   }
 }
