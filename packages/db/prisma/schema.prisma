@@ -203,6 +203,8 @@ model Tenant {
   secrets         SecretReference[]
   backups         Backup[]
   mcpAccess       TenantMcpAccess[]
+  agents          Agent[]
+  integrations    Integration[]
 
   @@index([status])
   @@index([assignedHostId])
@@ -437,4 +439,75 @@ model PlatformSetting {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("platform_settings")
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Control Center — deployed-agent registry, providers, integrations
+// (Live time-series telemetry lives in ClickHouse, not Postgres.)
+// ──────────────────────────────────────────────────────────────────────────
+
+enum AgentStatus {
+  online
+  degraded
+  offline
+  paused
+  error
+}
+
+model Agent {
+  id             String      @id @default(cuid())
+  tenantId       String      @map("tenant_id")
+  externalId     String      @map("external_id") // id within the tenant runtime
+  name           String
+  runtimeType    String      @default("swarmclaw") @map("runtime_type")
+  status         AgentStatus @default(offline)
+  healthScore    Int?        @map("health_score")
+  currentTask    String?     @map("current_task")
+  currentLlm     String?     @map("current_llm")
+  fallbackModels Json?       @map("fallback_models")
+  promptVersion  String?     @map("prompt_version")
+  skillVersion   String?     @map("skill_version")
+  queueLength    Int         @default(0) @map("queue_length")
+  lastSeenAt     DateTime?   @map("last_seen_at")
+  createdAt      DateTime    @default(now()) @map("created_at")
+  updatedAt      DateTime    @updatedAt @map("updated_at")
+
+  tenant         Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, externalId])
+  @@index([status])
+  @@map("agents")
+}
+
+model Provider {
+  id          String   @id @default(cuid())
+  name        String   @unique // openai | anthropic | google | openrouter | ...
+  displayName String?  @map("display_name")
+  baseUrl     String?  @map("base_url")
+  enabled     Boolean  @default(true)
+  authStatus  String?  @map("auth_status") // ok | invalid | unknown
+  lastCheckAt DateTime? @map("last_check_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("providers")
+}
+
+model Integration {
+  id          String   @id @default(cuid())
+  kind        String   // openclaw | swarmclaw | grafana | hetzner | halopsa | ...
+  name        String
+  tenantId    String?  @map("tenant_id") // null = platform-wide
+  configJson  Json     @default("{}") @map("config_json")
+  secretRefs  Json     @default("[]") @map("secret_refs")
+  enabled     Boolean  @default(true)
+  status      String   @default("unknown") // ok | error | unknown
+  lastSyncAt  DateTime? @map("last_sync_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  tenant      Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([kind])
+  @@map("integrations")
 }

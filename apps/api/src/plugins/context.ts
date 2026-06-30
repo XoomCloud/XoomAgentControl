@@ -6,6 +6,12 @@ import { loadConfig, type AppConfig } from "../config.js";
 import { LiteLlmGateway, type LlmGateway } from "../lib/providers/llm.js";
 import { SupermemoryProvider, type MemoryProvider } from "../lib/providers/memory.js";
 import { LocalSecretsProvider, type SecretsProvider } from "../lib/secrets.js";
+import { createTelemetryStore, type TelemetryStore } from "@xoom/telemetry";
+
+/** Realtime publisher — fans telemetry/events out to subscribed websocket topics. */
+export interface RealtimePublisher {
+  publish(topic: string, event: string, payload: unknown): void;
+}
 
 declare module "fastify" {
   interface FastifyInstance {
@@ -14,6 +20,8 @@ declare module "fastify" {
     llm: LlmGateway;
     memory: MemoryProvider;
     secrets: SecretsProvider;
+    telemetry: TelemetryStore;
+    rt: RealtimePublisher;
     /** Guard: requires a valid admin session. Optionally enforces write access. */
     requireUser: (opts?: { write?: boolean }) => (req: FastifyRequest, reply: FastifyReply) => Promise<void>;
     /** Guard: authenticates a host agent via its long-lived bearer key. */
@@ -34,6 +42,21 @@ export const contextPlugin = fp(async function contextPlugin(app: FastifyInstanc
   app.decorate("llm", new LiteLlmGateway(config.LITELLM_BASE_URL, config.LITELLM_ADMIN_KEY));
   app.decorate("memory", new SupermemoryProvider(config.SUPERMEMORY_BASE_URL, config.SUPERMEMORY_API_KEY));
   app.decorate("secrets", new LocalSecretsProvider(config.SECRETS_MASTER_KEY));
+
+  const telemetry = createTelemetryStore();
+  app.decorate("telemetry", telemetry);
+  // Best-effort schema bootstrap; never block boot on telemetry store issues.
+  app.addHook("onReady", async () => {
+    try {
+      await telemetry.ensureSchema();
+      app.log.info(`telemetry store ready (${telemetry.backend})`);
+    } catch (err) {
+      app.log.warn({ err }, "telemetry ensureSchema failed — continuing");
+    }
+  });
+  app.addHook("onClose", async () => {
+    await telemetry.close().catch(() => {});
+  });
 
   function bearer(req: FastifyRequest): string | null {
     const h = req.headers.authorization;

@@ -1,10 +1,12 @@
 import type { AgentConfig } from "./config.js";
 import { loadState, saveState, type AgentState } from "./state.js";
 import { ControlPlaneClient } from "./api-client.js";
-import { collectMetrics, collectCapacity } from "./metrics.js";
+import { collectMetrics, collectCapacity, collectHostMetricPoints, collectDockerContainerCount } from "./metrics.js";
 import { FirecrackerManager } from "./firecracker.js";
 import { SwarmClawInstaller } from "./swarmclaw.js";
 import { CommandExecutor } from "./executor.js";
+import { LogShipper } from "./collectors/log-shipper.js";
+import { RuntimePoller } from "./collectors/runtime-poller.js";
 
 function log(msg: string, extra?: unknown) {
   const line = { ts: new Date().toISOString(), component: "host-agent", msg, ...(extra ? { extra } : {}) };
@@ -17,6 +19,8 @@ export class HostAgent {
   private readonly client: ControlPlaneClient;
   private readonly fc: FirecrackerManager;
   private readonly executor: CommandExecutor;
+  private readonly logShipper: LogShipper;
+  private readonly runtimePoller: RuntimePoller;
   private running = false;
 
   constructor(private readonly cfg: AgentConfig) {
@@ -24,6 +28,24 @@ export class HostAgent {
     this.client = new ControlPlaneClient(cfg.controlPlaneUrl, this.state.hostId, this.state.agentKey);
     this.fc = new FirecrackerManager(cfg);
     this.executor = new CommandExecutor(cfg, this.fc, new SwarmClawInstaller(cfg));
+    this.logShipper = new LogShipper(cfg.logDirs);
+    this.runtimePoller = new RuntimePoller(cfg.runtimes);
+  }
+
+  /** Collects host metrics + docker + log lines + runtime agent state and ships it. */
+  async shipTelemetry(): Promise<void> {
+    try {
+      const vms = this.executor.runningVms();
+      const metrics = collectHostMetricPoints(vms.length);
+      metrics.push({ name: "host.docker.containers", value: collectDockerContainerCount(), unit: "count", ts: Date.now() });
+      const logs = this.logShipper.collect();
+      await this.client.ingest({ source: { kind: "host", host_id: this.state.hostId }, metrics, logs: logs.length ? logs : undefined });
+
+      const beats = await this.runtimePoller.collect();
+      if (beats.length) await this.client.reportAgents(beats);
+    } catch (err) {
+      log("telemetry ship failed", { error: err instanceof Error ? err.message : String(err) });
+    }
   }
 
   /** Registers the host if we don't already hold credentials. */
@@ -96,14 +118,17 @@ export class HostAgent {
     this.running = true;
 
     await this.sendHeartbeat();
+    await this.shipTelemetry();
     const hb = setInterval(() => void this.sendHeartbeat(), this.cfg.heartbeatIntervalSeconds * 1000);
     const poll = setInterval(() => void this.pollAndRunCommands(), this.cfg.pollIntervalSeconds * 1000);
+    const tele = setInterval(() => void this.shipTelemetry(), this.cfg.telemetryIntervalSeconds * 1000);
 
     const shutdown = () => {
       if (!this.running) return;
       this.running = false;
       clearInterval(hb);
       clearInterval(poll);
+      clearInterval(tele);
       log("shutting down");
       process.exit(0);
     };

@@ -1,6 +1,8 @@
 export * from "./enums.js";
 export * from "./host-agent.js";
 export * from "./admin.js";
+export * from "./telemetry.js";
+export * from "./control-center.js";
 
 // Canonical audit action names. Every mutating admin action emits one of these.
 export const AUDIT_ACTIONS = {
