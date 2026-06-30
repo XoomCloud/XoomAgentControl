@@ -6,17 +6,23 @@ RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
 WORKDIR /app
 
 FROM base AS build
-COPY pnpm-workspace.yaml package.json tsconfig.base.json ./
+# Copy the lockfile + every workspace manifest so pnpm resolves the full,
+# consistent workspace graph, then install only the API and its deps.
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
 COPY packages/db/package.json packages/db/
 COPY packages/shared-types/package.json packages/shared-types/
 COPY packages/auth/package.json packages/auth/
+COPY packages/telemetry/package.json packages/telemetry/
 COPY apps/api/package.json apps/api/
-RUN pnpm install --frozen-lockfile=false
+COPY apps/web/package.json apps/web/
+COPY host-agent/package.json host-agent/
+RUN pnpm install --frozen-lockfile=false --filter "@xoom/api..."
 COPY packages packages
 COPY apps/api apps/api
 RUN pnpm --filter @xoom/db generate \
   && pnpm --filter @xoom/shared-types build \
   && pnpm --filter @xoom/auth build \
+  && pnpm --filter @xoom/telemetry build \
   && pnpm --filter @xoom/db build \
   && pnpm --filter @xoom/api build
 
