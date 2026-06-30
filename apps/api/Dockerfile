@@ -10,6 +10,7 @@ COPY pnpm-workspace.yaml package.json tsconfig.base.json ./
 COPY packages/db/package.json packages/db/
 COPY packages/shared-types/package.json packages/shared-types/
 COPY packages/auth/package.json packages/auth/
+COPY packages/telemetry/package.json packages/telemetry/
 COPY apps/api/package.json apps/api/
 RUN pnpm install --frozen-lockfile=false
 COPY packages packages
@@ -17,6 +18,7 @@ COPY apps/api apps/api
 RUN pnpm --filter @xoom/db generate \
   && pnpm --filter @xoom/shared-types build \
   && pnpm --filter @xoom/auth build \
+  && pnpm --filter @xoom/telemetry build \
   && pnpm --filter @xoom/db build \
   && pnpm --filter @xoom/api build
 
