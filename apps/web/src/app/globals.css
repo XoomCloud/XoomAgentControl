@@ -151,3 +151,17 @@ pre.json { background: var(--bg); border: 1px solid var(--border); border-radius
 .login-card { width: 380px; max-width: 92vw; }
 .spinner { width: 18px; height: 18px; border: 2px solid var(--border-strong); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* Command palette */
+.cmdk-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.5); backdrop-filter: blur(4px); display: grid; place-items: start center; padding-top: 14vh; z-index: 100; }
+.cmdk-box { width: 600px; max-width: 92vw; background: var(--bg-elev); border: 1px solid var(--border-strong); border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,.5); overflow: hidden; }
+.cmdk-input { width: 100%; border: none; background: transparent; color: var(--text); padding: 16px 18px; font-size: 15px; outline: none; border-bottom: 1px solid var(--border); }
+.cmdk-list { max-height: 50vh; overflow: auto; padding: 8px; }
+.cmdk-group [cmdk-group-heading] { color: var(--text-faint); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; padding: 8px 10px 4px; }
+.cmdk-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px; cursor: pointer; color: var(--text-dim); }
+.cmdk-item[data-selected="true"] { background: var(--bg-elev-2); color: var(--text); box-shadow: inset 2px 0 0 var(--accent); }
+.cmdk-empty { padding: 24px; text-align: center; color: var(--text-faint); }
+
+/* Glass cards for live dashboards */
+.glass { background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.01)); border: 1px solid var(--border); border-radius: var(--radius); backdrop-filter: blur(6px); }
+.health-ring { width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 14px; }
