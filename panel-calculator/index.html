@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tilt Panel Patch Calculator</title>
+  <meta name="description" content="Upload tilt-up panel drawings, count panels and price concrete patching by linear metre of edge and/or square metre of surface." />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="wrap topbar-inner">
+      <div class="brand">
+        <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true"><rect x="3" y="6" width="11" height="20" rx="1.5" fill="currentColor" opacity=".55"/><rect x="16" y="3" width="13" height="23" rx="1.5" fill="currentColor"/><rect x="2" y="27" width="28" height="2" rx="1" fill="currentColor"/></svg>
+        <div>
+          <h1>Tilt Panel Patch Calculator</h1>
+          <p class="sub">Concrete tilt-up panel patching quotes from your drawings</p>
+        </div>
+      </div>
+      <div class="topbar-actions no-print">
+        <button id="btn-new-job" class="btn ghost" type="button">New job</button>
+        <button id="btn-print" class="btn" type="button">Print / PDF quote</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <!-- Job details -->
+    <section class="card">
+      <h2><span class="step">1</span> Job details</h2>
+      <div class="grid job-grid">
+        <label>Client <input id="job-client" type="text" placeholder="Builder / client name" /></label>
+        <label>Job / site <input id="job-name" type="text" placeholder="e.g. Warehouse 3, Lot 12 Smith St" /></label>
+        <label>Quote no. <input id="job-quote" type="text" placeholder="Q-0001" /></label>
+        <label>Date <input id="job-date" type="date" /></label>
+      </div>
+    </section>
+
+    <!-- Drawings -->
+    <section class="card no-print">
+      <h2><span class="step">2</span> Upload drawings</h2>
+      <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Upload PDF drawing">
+        <input id="file-input" type="file" accept="application/pdf,.pdf" hidden />
+        <svg viewBox="0 0 24 24" width="36" height="36" aria-hidden="true"><path fill="currentColor" d="M12 3l5 5h-3v6h-4V8H7l5-5zm-7 14h14v2H5v-2z"/></svg>
+        <p><strong>Drop a PDF of the plans here</strong> or click to choose a file</p>
+        <p class="muted small">Panel layouts, elevations or panel schedules. The file stays on your computer unless you use the AI reader.</p>
+      </div>
+      <div id="file-status" class="status" hidden></div>
+
+      <div id="detect-actions" class="detect-actions" hidden>
+        <div class="detect-option">
+          <h3>Quick read <span class="tag">free · instant</span></h3>
+          <p class="muted small">Reads the text in CAD-exported PDFs and looks for panel marks (P1, PNL-02…) with sizes like 6000 x 8400.</p>
+          <button id="btn-quick" class="btn" type="button">Find panels from text</button>
+        </div>
+        <div class="detect-option">
+          <h3>AI read <span class="tag accent">Claude</span></h3>
+          <p class="muted small">Claude reads the drawings like an estimator: schedules, elevations, dimension strings, openings. Works on scanned drawings. Needs your Anthropic API key.</p>
+          <div class="ai-key-row">
+            <input id="api-key" type="password" placeholder="sk-ant-…" autocomplete="off" aria-label="Anthropic API key" />
+            <label class="check small"><input id="remember-key" type="checkbox" /> Remember on this device</label>
+          </div>
+          <button id="btn-ai" class="btn accent" type="button">Read drawings with AI</button>
+        </div>
+        <div class="detect-option">
+          <h3>Measure manually</h3>
+          <p class="muted small">Set the drawing scale, then drag a box over a panel on the drawing to add it with measured width and height.</p>
+          <button id="btn-show-viewer" class="btn ghost" type="button">Open drawing viewer</button>
+        </div>
+      </div>
+      <div id="ai-notes" class="notice" hidden></div>
+
+      <!-- Viewer -->
+      <div id="viewer" class="viewer" hidden>
+        <div class="viewer-toolbar">
+          <div class="tool-group">
+            <button id="pg-prev" class="btn small ghost" type="button" aria-label="Previous page">‹</button>
+            <span id="pg-label" class="small">Page 1 / 1</span>
+            <button id="pg-next" class="btn small ghost" type="button" aria-label="Next page">›</button>
+          </div>
+          <div class="tool-group">
+            <button id="zoom-out" class="btn small ghost" type="button" aria-label="Zoom out">−</button>
+            <span id="zoom-label" class="small">100%</span>
+            <button id="zoom-in" class="btn small ghost" type="button" aria-label="Zoom in">+</button>
+          </div>
+          <div class="tool-group">
+            <label class="small inline">Scale 1:<input id="scale-denom" type="number" min="1" step="1" placeholder="100" /></label>
+            <button id="tool-calibrate" class="btn small ghost" type="button" title="Click two points of a known dimension">Calibrate</button>
+            <span id="scale-label" class="small muted">No scale set</span>
+          </div>
+          <div class="tool-group">
+            <button id="tool-measure" class="btn small" type="button">▭ Measure panel</button>
+            <button id="tool-line" class="btn small ghost" type="button">↔ Measure line</button>
+          </div>
+        </div>
+        <p id="viewer-hint" class="small muted viewer-hint">Choose a tool above. Scroll to pan.</p>
+        <div class="canvas-scroll">
+          <div class="canvas-stack">
+            <canvas id="pdf-canvas"></canvas>
+            <canvas id="overlay-canvas"></canvas>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Rates -->
+    <section class="card">
+      <h2><span class="step">3</span> Rates &amp; what gets charged</h2>
+      <div class="rates">
+        <div class="rate-box" id="rate-linear-box">
+          <label class="check big"><input id="charge-linear" type="checkbox" /> Charge per linear metre of edge</label>
+          <div class="money-input">
+            <span>$</span><input id="linear-rate" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00" aria-label="Linear rate per metre" /><span>/ lm</span>
+          </div>
+          <fieldset class="edges">
+            <legend class="small muted">Edges included</legend>
+            <label class="check small"><input id="edge-top" type="checkbox" /> Top</label>
+            <label class="check small"><input id="edge-bottom" type="checkbox" /> Bottom</label>
+            <label class="check small"><input id="edge-sides" type="checkbox" /> Both sides</label>
+            <label class="check small"><input id="edge-openings" type="checkbox" /> Opening edges</label>
+          </fieldset>
+        </div>
+        <div class="rate-box" id="rate-area-box">
+          <label class="check big"><input id="charge-area" type="checkbox" /> Charge per square metre of surface</label>
+          <div class="money-input">
+            <span>$</span><input id="area-rate" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00" aria-label="Area rate per square metre" /><span>/ m²</span>
+          </div>
+          <div class="row-opts">
+            <label class="small">Faces patched
+              <select id="faces"><option value="1">One face</option><option value="2">Both faces</option></select>
+            </label>
+            <label class="check small"><input id="deduct-openings" type="checkbox" /> Deduct openings from area</label>
+          </div>
+        </div>
+        <div class="rate-box">
+          <label class="small">Minimum job charge
+            <div class="money-input"><span>$</span><input id="minimum-charge" type="number" min="0" step="1" placeholder="0" /></div>
+          </label>
+          <label class="check small"><input id="gst" type="checkbox" /> Add GST
+            <input id="gst-rate" class="tiny" type="number" min="0" step="0.5" aria-label="GST rate percent" />%</label>
+        </div>
+      </div>
+      <p id="rate-warning" class="warning small" hidden>Select at least one charge type (linear and/or square metre).</p>
+    </section>
+
+    <!-- Panels -->
+    <section class="card">
+      <div class="card-head">
+        <h2><span class="step">4</span> Panels <span id="panel-count-badge" class="badge">0</span></h2>
+        <div class="no-print head-actions">
+          <button id="btn-add" class="btn small" type="button">+ Add panel</button>
+          <button id="btn-clear" class="btn small ghost" type="button">Clear all</button>
+        </div>
+      </div>
+      <p class="small muted no-print">Sizes in millimetres. Openings as <code>W x H</code>, comma separated; use <code>2@900x900</code> for two the same. Check every row against the drawings before quoting.</p>
+      <div class="table-scroll">
+        <table id="panel-table">
+          <thead>
+            <tr>
+              <th>Mark</th><th class="num">Qty</th><th class="num">Width</th><th class="num">Height</th><th class="num">Thk</th>
+              <th>Openings</th>
+              <th class="num col-linear">Edge lm</th><th class="num col-area">Area m²</th>
+              <th class="num col-linear">Linear $</th><th class="num col-area">Area $</th><th class="num">Total</th><th class="no-print"></th>
+            </tr>
+          </thead>
+          <tbody id="panel-body"></tbody>
+        </table>
+      </div>
+      <div id="empty-state" class="empty">No panels yet - upload a drawing above or add panels by hand.</div>
+    </section>
+
+    <!-- Summary -->
+    <section class="card summary-card">
+      <h2><span class="step">5</span> Quote summary</h2>
+      <div class="summary">
+        <div class="stats">
+          <div class="stat"><span class="stat-label">Panels</span><span id="s-panels" class="stat-value">0</span></div>
+          <div class="stat"><span class="stat-label">Total edge</span><span id="s-linear" class="stat-value">0 lm</span></div>
+          <div class="stat"><span class="stat-label">Total surface</span><span id="s-area" class="stat-value">0 m²</span></div>
+        </div>
+        <table class="totals">
+          <tbody>
+            <tr id="t-linear-row"><td id="t-linear-label">Edge patching</td><td id="t-linear" class="num">$0.00</td></tr>
+            <tr id="t-area-row"><td id="t-area-label">Surface patching</td><td id="t-area" class="num">$0.00</td></tr>
+            <tr id="t-min-row" hidden><td>Minimum charge applied</td><td class="num muted">✓</td></tr>
+            <tr class="sub"><td>Subtotal (ex GST)</td><td id="t-sub" class="num">$0.00</td></tr>
+            <tr id="t-gst-row"><td id="t-gst-label">GST</td><td id="t-gst" class="num">$0.00</td></tr>
+            <tr class="grand"><td>Total</td><td id="t-total" class="num">$0.00</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="no-print summary-actions">
+        <button id="btn-csv" class="btn ghost" type="button">Export CSV</button>
+        <button id="btn-print-2" class="btn" type="button">Print / PDF quote</button>
+      </div>
+    </section>
+  </main>
+
+  <footer class="wrap footer small muted">Quantities are estimates from drawings - verify on site. Saved automatically in this browser.</footer>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

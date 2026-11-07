@@ -1,0 +1,11 @@
+{
+  "name": "tilt-panel-patch-calculator",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Static web calculator for pricing concrete tilt-up panel patching from PDF drawings.",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "start": "npx --yes serve@14.2.4 -l 5173 ."
+  }
+}
